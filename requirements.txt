@@ -1,6 +1,1 @@
-streamlit
-pyrebase4
-oauth2client
-requests_toolbelt
-python_jwt
-gcloud==0.18.3
+firebase_admin
