@@ -1,90 +1,102 @@
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, db
-import os
+import pyrebase
+import uuid
+import time
 
-st.set_page_config(page_title="🎮 2-Period Dynamic Game", layout="centered")
+# Firebase config with Realtime Database secret
+firebaseConfig = {
+    "apiKey": "AIzaSyCumR68sCbY032ecgg-yhKPDgC15Q22G9E",
+    "authDomain": "dynamic-game-79aa7.firebaseapp.com",
+    "databaseURL": "https://dynamic-game-79aa7-default-rtdb.firebaseio.com/",
+    "projectId": "dynamic-game-79aa7",
+    "storageBucket": "dynamic-game-79aa7.appspot.com",
+    "messagingSenderId": "774660982535",
+    "appId": "1:774660982535:web:be6e8d2b041bfaccd727a2",
+    "databaseSecret": "0jzX8xvTaFHjTD9ohG8ovnMiMYMfL2MIqMik8Meq"
+}
+
+# Initialize Firebase
+firebase = pyrebase.initialize_app(firebaseConfig)
+db = firebase.database()
+
+# App UI
 st.title("🎲 Multiplayer 2-Period Dynamic Game")
+st.markdown("Please enter your full name to join the game. You’ll be matched as Player 1 or Player 2 automatically.")
 
-# Firebase initialization
-cred_path = "dynamic-game-79aa7-firebase-adminsdk-fbsvc-ad7b67faad.json"
-if not firebase_admin._apps:
-    try:
-        cred = credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred, {
-            'databaseURL': 'https://dynamic-game-79aa7-default-rtdb.firebaseio.com/'
-        })
-    except Exception as e:
-        st.error(f"Firebase initialization failed: {e}")
+# Player login
+name = st.text_input("Enter your full name:")
+
+if st.button("Join Game"):
+    if not name:
+        st.warning("❗ Please enter your name.")
         st.stop()
 
-# Player registration
-name = st.text_input("Enter your name to join the game:")
-if name:
-    st.success(f"👋 Welcome, {name}!")
-    player_ref = db.reference(f"players/{name}")
-    player_ref.set({"joined": True})
+    # Check current players
+    players = db.child("players").get().val()
+    if players is None:
+        players = {}
 
-    # Game description
-    with st.expander("📜 Game Description"):
-        st.markdown("""
-        - The game has **two players** and **two periods**.
-        - In each period, Player 1 chooses between **A** or **B**.
-        - Player 2 chooses between **X**, **Y**, or **Z**.
-        - Payoffs depend on the combination chosen, and are **known to both players**.
-        - Period 2 decisions can depend on Period 1 results.
-        """)
-
-    # Match players in pairs (simple logic: alphabetical)
-    players = db.reference("players").get()
-    sorted_players = sorted(players.keys()) if players else []
-
-    if name in sorted_players:
-        idx = sorted_players.index(name)
-        pair_idx = idx + 1 if idx % 2 == 0 else idx - 1
-        if 0 <= pair_idx < len(sorted_players):
-            partner_name = sorted_players[pair_idx]
-            is_p1 = idx % 2 == 0
-            role = "Player 1" if is_p1 else "Player 2"
-            st.info(f"You are **{role}**, paired with **{partner_name}**.")
-
-            # Period 1
-            st.subheader("🕹 Period 1")
-            choice1 = st.radio("Choose your action:", ["A", "B"] if is_p1 else ["X", "Y", "Z"], key="period1")
-            if st.button("Submit Period 1 Move"):
-                db.reference(f"moves/period1/{name}").set(choice1)
-                st.success(f"✅ {role} move submitted: {choice1}")
-
-            # Fetch and show result
-            all_moves = db.reference("moves/period1").get()
-            if all_moves and name in all_moves and partner_name in all_moves:
-                p1_move = all_moves[name] if is_p1 else all_moves[partner_name]
-                p2_move = all_moves[partner_name] if is_p1 else all_moves[name]
-                matrix = {
-                    ("A", "X"): (4, 3),
-                    ("A", "Y"): (0, 0),
-                    ("A", "Z"): (1, 4),
-                    ("B", "X"): (0, 0),
-                    ("B", "Y"): (2, 1),
-                    ("B", "Z"): (0, 0),
-                }
-                payoff = matrix.get((p1_move, p2_move), (0, 0))
-                st.success(f"🎯 Period 1 Outcome: P1 = {p1_move}, P2 = {p2_move} → Payoffs = {payoff}")
-
-                # Period 2
-                st.subheader("🕹 Period 2")
-                choice2 = st.radio("Choose your action for Period 2:", ["A", "B"] if is_p1 else ["X", "Y", "Z"], key="period2")
-                if st.button("Submit Period 2 Move"):
-                    db.reference(f"moves/period2/{name}").set(choice2)
-                    st.success(f"✅ Period 2 move submitted: {choice2}")
-
-                all_moves2 = db.reference("moves/period2").get()
-                if all_moves2 and name in all_moves2 and partner_name in all_moves2:
-                    p1_2 = all_moves2[name] if is_p1 else all_moves2[partner_name]
-                    p2_2 = all_moves2[partner_name] if is_p1 else all_moves2[name]
-                    payoff2 = matrix.get((p1_2, p2_2), (0, 0))
-                    st.success(f"🎯 Period 2 Outcome: P1 = {p1_2}, P2 = {p2_2} → Payoffs = {payoff2}")
-        else:
-            st.warning("Waiting for another student to join so we can pair you.")
+    # Assign player role
+    if len(players) == 0:
+        player_role = "Player 1"
+    elif len(players) == 1:
+        player_role = "Player 2"
     else:
-        st.warning("Player not matched yet.")
+        st.error("❌ Two players already joined. Please wait for the next game.")
+        st.stop()
+
+    # Generate a unique ID
+    player_id = str(uuid.uuid4())
+    db.child("players").child(player_id).set({"name": name, "role": player_role, "choice": None})
+
+    st.success(f"✅ Welcome {name}, you are **{player_role}**!")
+
+    # Wait for second player
+    while True:
+        players = db.child("players").get().val()
+        if players and len(players) == 2:
+            break
+        with st.spinner("⏳ Waiting for another player to join..."):
+            time.sleep(1)
+
+    # Show game matrix
+    st.markdown("### 🎯 Payoff Matrix")
+    st.table({
+        "": {"X": "(4,3)", "Y": "(0,0)", "Z": "(1,4)"},
+        "A": {"X": "(4,3)", "Y": "(0,0)", "Z": "(1,4)"},
+        "B": {"X": "(0,0)", "Y": "(2,1)", "Z": "(0,0)"}
+    })
+
+    # Game choices
+    if player_role == "Player 1":
+        choice = st.radio("Choose A or B:", ["A", "B"])
+    else:
+        choice = st.radio("Choose X, Y, or Z:", ["X", "Y", "Z"])
+
+    if st.button("Submit Move"):
+        db.child("players").child(player_id).update({"choice": choice})
+        st.success("✅ Move submitted. Waiting for your partner...")
+
+        # Wait for other player
+        while True:
+            players = db.child("players").get().val()
+            choices = [v["choice"] for v in players.values()]
+            if all(c is not None for c in choices):
+                break
+            time.sleep(1)
+
+        # Show results
+        other = [v for k, v in players.items() if k != player_id][0]
+        your_move = choice
+        their_move = other["choice"]
+        your_role = player_role
+        their_role = other["role"]
+
+        st.markdown("### 🎉 Results")
+        st.markdown(f"🧑‍🤝‍🧑 You were **{your_role}**, chose **{your_move}**")
+        st.markdown(f"👤 {other['name']} was **{their_role}**, chose **{their_move}**")
+
+        st.balloons()
+
+        # Cleanup after game
+        db.child("players").remove()
